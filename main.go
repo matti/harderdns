@@ -74,7 +74,7 @@ func resolve(upstream string, question dns.Question) HarderResult {
 	return result
 }
 
-func harder(kind string, id string, question dns.Question, tries int) []dns.RR {
+func harder(kind string, id string, question dns.Question) []dns.RR {
 	try := 0
 	var result HarderResult
 
@@ -91,7 +91,7 @@ func harder(kind string, id string, question dns.Question, tries int) []dns.RR {
 		}
 
 		try = try + 1
-		log.Println(id, "RETRY ", question.Name, " after ", delay)
+		// log.Println(id, "RETRY ", question.Name, " after ", delay)
 		time.Sleep(delay)
 	}
 
@@ -100,7 +100,7 @@ func harder(kind string, id string, question dns.Question, tries int) []dns.RR {
 
 func parseQuery(kind string, id string, m *dns.Msg) {
 	for _, q := range m.Question {
-		records := harder(kind, id, q, 3)
+		records := harder(kind, id, q)
 		m.Answer = append(m.Answer, records...)
 	}
 }
@@ -131,7 +131,7 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if len(m.Answer) == 0 {
-		log.Println(id, "NXDOM ", r.Question[0].Name)
+		log.Println(id, "NXDOM ", kind, " ", r.Question[0].Name)
 		m.SetRcode(r, dns.RcodeNameError)
 	}
 
@@ -141,12 +141,14 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 var upstreams []string
 var timeout time.Duration
 var delay time.Duration
+var tries int
 
 var errors map[string]int
 
 func main() {
 	timeoutMs := flag.Int("timeout", 500, "timeout in ms")
 	delayMs := flag.Int("delay", 10, "delay in ms")
+	flag.IntVar(&tries, "tries", 3, "tries")
 
 	flag.Parse()
 
