@@ -1,88 +1,100 @@
 package main
 
 import (
-	"context"
+	"flag"
 	"fmt"
 	"log"
-	"net"
 	"strconv"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
-func resolver(upstream string) *net.Resolver {
-	return &net.Resolver{
-		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			d := net.Dialer{
-				Timeout: timeout,
-			}
-			return d.DialContext(ctx, network, upstream)
-		},
-	}
+type HarderResult struct {
+	records []dns.RR
+	rtt     time.Duration
 }
 
-func resolve(resolver *net.Resolver, question dns.Question) []dns.RR {
-	var records []dns.RR
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+func resolve(upstream string, question dns.Question) HarderResult {
+	c := dns.Client{
+		Timeout: timeout,
+	}
+	m := dns.Msg{}
+
+	var result HarderResult
 
 	switch question.Qtype {
 	case dns.TypeA:
-		ips, err := resolver.LookupIP(ctx, "ip4", question.Name)
+		m.SetQuestion(question.Name, dns.TypeA)
+		r, rtt, err := c.Exchange(&m, upstream)
 		if err != nil {
-			log.Println("r.LookupIPAddr", "err", err)
-			return records
+			errors[upstream] = errors[upstream] + 1
+			log.Println("ERROR", errors[upstream], "a", "c.Exchange", "err", err)
+			break
 		}
+		result.rtt = rtt
 
-		for _, ip := range ips {
-			rr, err := dns.NewRR(fmt.Sprintf("%s %d IN A %s", question.Name, ttl, ip.String()))
-			if err != nil {
-				log.Fatalln("a", "dns.NewRR", err)
+		for _, ans := range r.Answer {
+			if a, ok := ans.(*dns.A); ok {
+				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, ans.Header().Ttl, a.A.String()))
+				if err != nil {
+					log.Println("ERROR", "a", "dns.NewRR", err)
+					continue
+				}
+
+				result.records = append(result.records, rr)
 			}
-			records = append(records, rr)
 		}
 	case dns.TypeCNAME:
-		name, err := resolver.LookupCNAME(ctx, question.Name)
+		m.SetQuestion(question.Name, dns.TypeA)
+		r, rtt, err := c.Exchange(&m, upstream)
 		if err != nil {
-			log.Println("r.LookupCNAME", "err", err)
-			return records
+			errors[upstream] = errors[upstream] + 1
+			log.Println("ERROR", errors[upstream], "cname", "c.Exchange", "err", err)
 		}
-		record, err := dns.NewRR(fmt.Sprintf("%s %d CNAME %s", question.Name, ttl, name))
-		if err != nil {
-			log.Fatalln("cname", "dns.NewRR", err)
+		result.rtt = rtt
+
+		for _, ans := range r.Answer {
+			if cname, ok := ans.(*dns.CNAME); ok {
+				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, ans.Header().Ttl, cname.String()))
+				if err != nil {
+					log.Println("ERROR", "cname", "dns.NewRR", err)
+					continue
+				}
+
+				result.records = append(result.records, rr)
+			}
 		}
-		records = append(records, record)
 	}
 
-	return records
+	return result
 }
 
-func harder(resolvers []*net.Resolver, question dns.Question, tries int) []dns.RR {
+func harder(question dns.Question, tries int) []dns.RR {
 	try := 0
-	var records []dns.RR
+	var result HarderResult
 
 	for try < tries {
-		log.Println("try", try)
-		for _, resolver := range resolvers {
-			records = append(records, resolve(resolver, question)...)
+		for _, upstream := range upstreams {
+			result = resolve(upstream, question)
 
-			if len(records) > 0 {
-				log.Println("found", records)
-				return records
+			if len(result.records) > 0 {
+				log.Print("FOUND ", question.Name, " from ", upstream, " in ", result.rtt)
+				return result.records
 			}
 		}
 
 		try = try + 1
+		log.Println("RETRY", question.Name, " after ", delay)
+		time.Sleep(delay)
 	}
 
-	return records
+	return result.records
 }
 
 func parseQuery(m *dns.Msg) {
 	for _, q := range m.Question {
-		log.Println(q.String())
-		records := harder(resolvers, q, 3)
+		records := harder(q, 3)
 		m.Answer = append(m.Answer, records...)
 	}
 }
@@ -98,22 +110,37 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if len(m.Answer) == 0 {
+		log.Println("NXDOMAIN", r.Question[0].Name)
 		m.SetRcode(r, dns.RcodeNameError)
 	}
 
 	w.WriteMsg(m)
 }
 
-var resolvers []*net.Resolver
+var upstreams []string
 var timeout time.Duration
-var ttl int
+var delay time.Duration
+
+var errors map[string]int
 
 func main() {
-	ttl = 20
-	timeout = time.Millisecond * time.Duration(200)
+	timeoutMs := flag.Int("timeout", 101, "timeout in ms")
+	delayMs := flag.Int("delay", 0, "delay in ms")
 
-	resolvers = append(resolvers, resolver("1.1.1.1:53"))
-	resolvers = append(resolvers, resolver("8.8.8.8:53"))
+	flag.Parse()
+
+	timeout = time.Millisecond * time.Duration(*timeoutMs)
+	delay = time.Millisecond * time.Duration(*delayMs)
+
+	upstreams = flag.Args()
+	if len(upstreams) == 0 {
+		log.Fatalln("no upstreams")
+	}
+
+	errors = make(map[string]int)
+	for _, upstream := range upstreams {
+		errors[upstream] = 0
+	}
 
 	dns.HandleFunc(".", handleDnsRequest)
 
