@@ -4,6 +4,10 @@ metadata:
   name: harderdns
 spec:
   terminationGracePeriodSeconds: 0
+  dnsPolicy: "None"
+  dnsConfig:
+    nameservers:
+      - "127.0.0.1"
   containers:
     - name: harderdns-tests-user
       image: mattipaksula/harderdns:tests-user

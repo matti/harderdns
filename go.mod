@@ -3,6 +3,7 @@ module github.com/matti/harderdns
 go 1.17
 
 require (
+	github.com/google/uuid v1.3.0 // indirect
 	github.com/miekg/dns v1.1.45 // indirect
 	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/net v0.0.0-20210726213435-c6fcb2dbf985 // indirect
