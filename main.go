@@ -130,8 +130,20 @@ func harder(kind string, id string, question dns.Question) []dns.RR {
 
 func parseQuery(kind string, id string, m *dns.Msg) {
 	for _, q := range m.Question {
-		records := harder(kind, id, q)
-		m.Answer = append(m.Answer, records...)
+		if q.Name == "localhost." {
+			var rr dns.RR
+			switch q.Qtype {
+			case dns.TypeA:
+				rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", q.Name, 3600, "127.0.0.1"))
+			case dns.TypeAAAA:
+				rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", q.Name, 3600, "::1"))
+			}
+
+			m.Answer = append(m.Answer, rr)
+		} else {
+			records := harder(kind, id, q)
+			m.Answer = append(m.Answer, records...)
+		}
 	}
 }
 
