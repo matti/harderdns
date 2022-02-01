@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: harderdns
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+    - name: harderdns-tests-user
+      image: mattipaksula/harderdns:tests-user
+      imagePullPolicy: Always
+      resources:
+        limits:
+          cpu: "0.1"
+          memory: 128Mi
