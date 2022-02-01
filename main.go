@@ -14,23 +14,26 @@ import (
 type HarderResult struct {
 	records []dns.RR
 	rtt     time.Duration
+	error   bool
 }
 
-func resolve(upstream string, question dns.Question) HarderResult {
+func resolve(id string, kind string, upstream string, question dns.Question) HarderResult {
 	c := dns.Client{
 		Timeout: timeout,
 	}
 	m := dns.Msg{}
 
 	var result HarderResult
+	result.error = false
 
 	switch question.Qtype {
 	case dns.TypeA:
 		m.SetQuestion(question.Name, dns.TypeA)
 		r, rtt, err := c.Exchange(&m, upstream)
 		if err != nil {
+			result.error = true
 			errors[upstream] = errors[upstream] + 1
-			log.Println("ERROR", errors[upstream], "a", "c.Exchange", "err", err)
+			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "A", "c.Exchange", "err", err)
 			break
 		}
 		result.rtt = rtt
@@ -39,7 +42,7 @@ func resolve(upstream string, question dns.Question) HarderResult {
 			if a, ok := ans.(*dns.A); ok {
 				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, ans.Header().Ttl, a.A.String()))
 				if err != nil {
-					log.Println("ERROR", "a", "dns.NewRR", err)
+					log.Println(id, "ERROR", "A", "dns.NewRR", err)
 					continue
 				}
 
@@ -50,8 +53,9 @@ func resolve(upstream string, question dns.Question) HarderResult {
 		m.SetQuestion(question.Name, dns.TypeAAAA)
 		r, rtt, err := c.Exchange(&m, upstream)
 		if err != nil {
+			result.error = true
 			errors[upstream] = errors[upstream] + 1
-			log.Println("ERROR", errors[upstream], "aaaa", "c.Exchange", "err", err)
+			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "AAAA", "c.Exchange", "err", err)
 			break
 		}
 		result.rtt = rtt
@@ -60,7 +64,7 @@ func resolve(upstream string, question dns.Question) HarderResult {
 			if a, ok := ans.(*dns.AAAA); ok {
 				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, ans.Header().Ttl, a.AAAA.String()))
 				if err != nil {
-					log.Println("ERROR", "a", "dns.NewRR", err)
+					log.Println(id, "ERROR", "AAAA", "dns.NewRR", err)
 					continue
 				}
 
@@ -82,16 +86,20 @@ func harder(kind string, id string, question dns.Question) []dns.RR {
 
 	for try < tries {
 		for _, upstream := range upstreams {
-			result = resolve(upstream, question)
+			result = resolve(id, kind, upstream, question)
 
 			if len(result.records) > 0 {
 				log.Println(id, "FOUND ", kind, " ", question.Name, " from ", upstream, " in ", result.rtt)
 				return result.records
 			}
+
+			if !result.error {
+				return result.records
+			}
 		}
 
 		try = try + 1
-		// log.Println(id, "RETRY ", question.Name, " after ", delay)
+		log.Println(id, "RETRY ", kind, " ", question.Name, " after ", delay)
 		time.Sleep(delay)
 	}
 
