@@ -71,6 +71,28 @@ func resolve(id string, kind string, upstream string, question dns.Question) Har
 				result.records = append(result.records, rr)
 			}
 		}
+	case dns.TypePTR:
+		m.SetQuestion(question.Name, dns.TypePTR)
+		r, rtt, err := c.Exchange(&m, upstream)
+		if err != nil {
+			result.error = true
+			errors[upstream] = errors[upstream] + 1
+			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "PTR", "c.Exchange", "err", err)
+			break
+		}
+		result.rtt = rtt
+
+		for _, ans := range r.Answer {
+			if a, ok := ans.(*dns.PTR); ok {
+				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN PTR %s\n", question.Name, ans.Header().Ttl, a.Ptr))
+				if err != nil {
+					log.Println(id, "ERROR", "PTR", "dns.NewRR", err)
+					continue
+				}
+
+				result.records = append(result.records, rr)
+			}
+		}
 	default:
 		log.Println("SKIP", question.String())
 	}
@@ -126,6 +148,8 @@ func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
 		kind = "A   "
 	case dns.TypeAAAA:
 		kind = "AAAA"
+	case dns.TypePTR:
+		kind = "PTR"
 	default:
 		log.Println(id, "IGNORE", m.Question[len(m.Question)-1].String())
 
