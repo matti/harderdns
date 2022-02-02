@@ -20,6 +20,7 @@ type HarderResult struct {
 func resolve(id string, kind string, upstream string, question dns.Question) HarderResult {
 	c := dns.Client{
 		Timeout: timeout,
+		Net:     net,
 	}
 	m := dns.Msg{}
 
@@ -187,6 +188,7 @@ var timeout time.Duration
 var delay time.Duration
 var tries int
 var retry bool
+var net string
 
 var errors map[string]int
 
@@ -195,7 +197,7 @@ func main() {
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
-
+	flag.StringVar(&net, "net", "", "udp, tcp, tcp-tls")
 	flag.Parse()
 
 	timeout = time.Millisecond * time.Duration(*timeoutMs)
@@ -217,7 +219,7 @@ func main() {
 	server := &dns.Server{Addr: ":" + strconv.Itoa(port), Net: "udp"}
 	defer server.Shutdown()
 
-	log.Printf("Starting at :%d\n", port)
+	log.Printf("Starting at :%d using %s\n", port, net)
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatalf("Failed to start server: %s\n ", err.Error())
