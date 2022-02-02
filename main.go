@@ -197,7 +197,7 @@ func main() {
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
-	flag.StringVar(&net, "net", "", "udp, tcp, tcp-tls")
+	flag.StringVar(&net, "net", "udp", "udp, tcp, tcp-tls")
 	flag.Parse()
 
 	timeout = time.Millisecond * time.Duration(*timeoutMs)
