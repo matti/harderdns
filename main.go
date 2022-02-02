@@ -111,17 +111,17 @@ func harder(kind string, id string, question dns.Question) []dns.RR {
 			result = resolve(id, kind, upstream, question)
 
 			if len(result.records) > 0 {
-				log.Println(id, "FOUND ", kind, " ", question.Name, " from ", upstream, " in ", result.rtt)
+				log.Println(id, "FOUND ", kind, " ", question.Name, "from", upstream, "in", result.rtt)
 				return result.records
 			}
 
-			if !result.error {
+			if !retry && !result.error {
 				return result.records
 			}
 		}
 
 		try = try + 1
-		log.Println(id, "RETRY ", kind, " ", question.Name, " after ", delay)
+		log.Println(id, "RETRY ", kind, " ", question.Name, "after", delay, "try", try)
 		time.Sleep(delay)
 	}
 
@@ -186,6 +186,7 @@ var upstreams []string
 var timeout time.Duration
 var delay time.Duration
 var tries int
+var retry bool
 
 var errors map[string]int
 
@@ -193,6 +194,7 @@ func main() {
 	timeoutMs := flag.Int("timeout", 500, "timeout in ms")
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
+	flag.BoolVar(&retry, "retry", false, "retry")
 
 	flag.Parse()
 
