@@ -5,186 +5,117 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
 )
 
-type HarderResult struct {
-	records []dns.RR
-	rtt     time.Duration
-	error   bool
-}
-
-func resolve(id string, kind string, upstream string, question dns.Question) HarderResult {
+func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, error) {
 	c := dns.Client{
 		Timeout: timeout,
 		Net:     net,
 	}
-	m := dns.Msg{}
 
-	var result HarderResult
-	result.error = false
+	query := &dns.Msg{}
+	query.SetQuestion(question.Name, question.Qtype)
 
-	switch question.Qtype {
-	case dns.TypeA:
-		m.SetQuestion(question.Name, dns.TypeA)
-		r, rtt, err := c.Exchange(&m, upstream)
-		if err != nil {
-			result.error = true
-			errors[upstream] = errors[upstream] + 1
-			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "A", "c.Exchange", "err", err)
-			break
-		}
-		result.rtt = rtt
-
-		for _, ans := range r.Answer {
-			if a, ok := ans.(*dns.A); ok {
-				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, ans.Header().Ttl, a.A.String()))
-				if err != nil {
-					log.Println(id, "ERROR", "A", "dns.NewRR", err)
-					continue
-				}
-
-				result.records = append(result.records, rr)
-			}
-		}
-	case dns.TypeAAAA:
-		m.SetQuestion(question.Name, dns.TypeAAAA)
-		r, rtt, err := c.Exchange(&m, upstream)
-		if err != nil {
-			result.error = true
-			errors[upstream] = errors[upstream] + 1
-			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "AAAA", "c.Exchange", "err", err)
-			break
-		}
-		result.rtt = rtt
-
-		for _, ans := range r.Answer {
-			if a, ok := ans.(*dns.AAAA); ok {
-				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, ans.Header().Ttl, a.AAAA.String()))
-				if err != nil {
-					log.Println(id, "ERROR", "AAAA", "dns.NewRR", err)
-					continue
-				}
-
-				result.records = append(result.records, rr)
-			}
-		}
-	case dns.TypePTR:
-		m.SetQuestion(question.Name, dns.TypePTR)
-		r, rtt, err := c.Exchange(&m, upstream)
-		if err != nil {
-			result.error = true
-			errors[upstream] = errors[upstream] + 1
-			log.Println(id, "ERROR ", kind, " ", upstream, errors[upstream], "PTR", "c.Exchange", "err", err)
-			break
-		}
-		result.rtt = rtt
-
-		for _, ans := range r.Answer {
-			if a, ok := ans.(*dns.PTR); ok {
-				rr, err := dns.NewRR(fmt.Sprintf("%s %d IN PTR %s\n", question.Name, ans.Header().Ttl, a.Ptr))
-				if err != nil {
-					log.Println(id, "ERROR", "PTR", "dns.NewRR", err)
-					continue
-				}
-
-				result.records = append(result.records, rr)
-			}
-		}
-	default:
-		log.Println("SKIP", question.String())
-	}
-
-	return result
+	return c.Exchange(query, upstream)
 }
 
-func harder(kind string, id string, question dns.Question) []dns.RR {
+func harder(id string, question dns.Question) *dns.Msg {
 	try := 0
-	var result HarderResult
-
-	log.Println(id, "ASK   ", kind, " ", question.Name)
 
 	for try < tries {
 		for _, upstream := range upstreams {
-			result = resolve(id, kind, upstream, question)
-
-			if len(result.records) > 0 {
-				log.Println(id, "FOUND ", kind, " ", question.Name, "from", upstream, "in", result.rtt)
-				return result.records
-			}
-
-			if !retry && !result.error {
-				return result.records
+			response, rtt, err := resolve(upstream, question)
+			if err == nil {
+				return response
+			} else {
+				logger(id, "ERROR", question, fmt.Sprintf("%v", err)+" "+rtt.String())
 			}
 		}
 
 		try = try + 1
-		log.Println(id, "RETRY ", kind, " ", question.Name, "after", delay, "try", try)
+		logger(id, "RETRY", question, strconv.Itoa(try))
 		time.Sleep(delay)
 	}
 
-	return result.records
+	return nil
 }
 
-func parseQuery(kind string, id string, m *dns.Msg) {
-	for _, q := range m.Question {
-		if q.Name == "localhost." {
-			var rr dns.RR
-			switch q.Qtype {
-			case dns.TypeA:
-				rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", q.Name, 3600, "127.0.0.1"))
-			case dns.TypeAAAA:
-				rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", q.Name, 3600, "::1"))
-			}
+func logger(id string, kind string, question dns.Question, parts ...string) {
+	var sb strings.Builder
 
-			m.Answer = append(m.Answer, rr)
-		} else {
-			records := harder(kind, id, q)
-			m.Answer = append(m.Answer, records...)
-		}
+	sb.WriteString(id)
+	sb.WriteString("\t")
+	sb.WriteString(kind)
+	sb.WriteString("\t")
+	sb.WriteString(dns.Type(question.Qtype).String())
+	sb.WriteString("\t")
+	sb.WriteString(question.Name)
+	sb.WriteString(" ")
+
+	for _, part := range parts {
+		sb.WriteString(part)
+		sb.WriteString("\t")
 	}
+
+	println(sb.String())
 }
 
-func handleDnsRequest(w dns.ResponseWriter, r *dns.Msg) {
-	m := new(dns.Msg)
-	m.SetReply(r)
-	m.Compress = false
-
-	var kind string
+func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	id := uuid.New().String()
 
-	switch m.Question[0].Qtype {
-	case dns.TypeA:
-		kind = "A   "
-	case dns.TypeAAAA:
-		kind = "AAAA"
-	case dns.TypePTR:
-		kind = "PTR"
-	default:
-		log.Println(id, "IGNORE", m.Question[len(m.Question)-1].String())
+	final := new(dns.Msg)
+	final.SetReply(request)
+	final.Compress = false
+	final.RecursionAvailable = true
 
-		w.WriteMsg(m)
+	if request.Opcode != dns.OpcodeQuery {
+		w.WriteMsg(final)
 		return
 	}
 
-	switch r.Opcode {
-	case dns.OpcodeQuery:
-		parseQuery(kind, id, m)
-	}
+	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
+	question := request.Question[0]
 
-	if len(m.Answer) == 0 {
-		log.Println(id, "NXDOM ", kind, " ", r.Question[0].Name)
-		m.SetRcode(r, dns.RcodeNameError)
-	}
+	logger(id, "QUERY", question)
 
-	w.WriteMsg(m)
+	switch question.Name {
+	case "localhost.":
+		switch question.Qtype {
+		case dns.TypeA:
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			final.Answer = append(final.Answer, rr)
+		case dns.TypeAAAA:
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			final.Answer = append(final.Answer, rr)
+		}
+	default:
+		response := harder(id, question)
+		if response != nil {
+			final.Answer = response.Answer
+			final.Ns = response.Ns
+			final.Extra = response.Extra
+			final.SetRcode(request, response.Rcode)
+		} else {
+			final.SetRcode(request, dns.RcodeServerFailure)
+		}
+	}
+	answers := strconv.Itoa(len(final.Answer))
+	nss := strconv.Itoa(len(final.Ns))
+	extras := strconv.Itoa(len(final.Extra))
+
+	logger(id, "ANSWER", question, dns.RcodeToString[final.Rcode], answers+","+nss+","+extras)
+	w.WriteMsg(final)
+
 }
 
 var upstreams []string
 var timeout time.Duration
+
 var delay time.Duration
 var tries int
 var retry bool
@@ -193,7 +124,8 @@ var net string
 var errors map[string]int
 
 func main() {
-	timeoutMs := flag.Int("timeout", 500, "timeout in ms")
+	timeoutMs := flag.Int("timeout", 200, "timeout")
+
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
