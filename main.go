@@ -15,8 +15,11 @@ import (
 
 func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, error) {
 	c := dns.Client{
-		Timeout: timeout,
-		Net:     net,
+		DialTimeout:  dialTimeout,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+
+		Net: net,
 	}
 
 	query := &dns.Msg{}
@@ -153,7 +156,9 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 }
 
 var upstreams []string
-var timeout time.Duration
+var dialTimeout time.Duration
+var readTimeout time.Duration
+var writeTimeout time.Duration
 
 var delay time.Duration
 var tries int
@@ -163,7 +168,9 @@ var net string
 var errors map[string]int
 
 func main() {
-	timeoutMs := flag.Int("timeout", 200, "timeout")
+	dialTimeoutMs := flag.Int("dialTimeout", 101, "dialTimeout")
+	readTimeoutMs := flag.Int("readTimeout", 500, "readTimeout")
+	writeTimeoutMs := flag.Int("writeTimeout", 500, "writeTimeout")
 
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
@@ -171,7 +178,10 @@ func main() {
 	flag.StringVar(&net, "net", "udp", "udp, tcp, tcp-tls")
 	flag.Parse()
 
-	timeout = time.Millisecond * time.Duration(*timeoutMs)
+	dialTimeout = time.Millisecond * time.Duration(*dialTimeoutMs)
+	readTimeout = time.Millisecond * time.Duration(*readTimeoutMs)
+	writeTimeout = time.Millisecond * time.Duration(*writeTimeoutMs)
+
 	delay = time.Millisecond * time.Duration(*delayMs)
 
 	upstreams = flag.Args()
@@ -187,7 +197,10 @@ func main() {
 	dns.HandleFunc(".", handleDnsRequest)
 
 	port := 53
-	server := &dns.Server{Addr: ":" + strconv.Itoa(port), Net: "udp"}
+	server := &dns.Server{
+		Addr: ":" + strconv.Itoa(port),
+		Net:  "udp",
+	}
 	defer server.Shutdown()
 
 	log.Printf("Starting at :%d using %s\n", port, net)
