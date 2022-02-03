@@ -1,9 +1,9 @@
 version: '3'
 
 services:
-  harderdns:
-    build: ..
-    image: harderdns
   app:
     build: .
     image: mattipaksula/harderdns:tests-user
+  harderdns:
+    build: ..
+    image: harderdns
