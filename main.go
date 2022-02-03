@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,25 +26,61 @@ func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, e
 }
 
 func harder(id string, question dns.Question) *dns.Msg {
-	try := 0
+	stop := false
 
-	for try < tries {
-		for _, upstream := range upstreams {
-			response, rtt, err := resolve(upstream, question)
-			if err == nil {
-				return response
-			} else {
-				logger(id, "ERROR", question, fmt.Sprintf("%v", err)+" "+rtt.String())
+	responses := make(chan *dns.Msg, len(upstreams))
+
+	logger(id, "QUERY", question)
+
+	for _, upstream := range upstreams {
+		go func(upstream string, question dns.Question) {
+			try := 0
+
+			for try < tries {
+				if stop {
+					return
+				}
+				response, rtt, err := resolve(upstream, question)
+				if stop {
+					return
+				}
+
+				if err == nil {
+					logger(id, "GOT", question, upstream, rtt.String())
+					responses <- response
+					return
+				} else {
+					logger(id, "ERROR", question, upstream, fmt.Sprintf("%v", err)+" "+rtt.String())
+				}
+
+				try = try + 1
+				time.Sleep(delay)
+				logger(id, "RETRY", question, upstream, strconv.Itoa(try))
 			}
-		}
 
-		try = try + 1
-		logger(id, "RETRY", question, strconv.Itoa(try))
-		time.Sleep(delay)
+			responses <- nil
+		}(upstream, question)
 	}
 
-	return nil
+	received := 0
+	var final *dns.Msg
+	for response := range responses {
+		received = received + 1
+		if response != nil {
+			final = response
+			break
+		}
+
+		if received == len(upstreams) {
+			break
+		}
+	}
+
+	stop = true
+	return final
 }
+
+var loggerMutex sync.Mutex
 
 func logger(id string, kind string, question dns.Question, parts ...string) {
 	var sb strings.Builder
@@ -62,7 +99,10 @@ func logger(id string, kind string, question dns.Question, parts ...string) {
 		sb.WriteString("\t")
 	}
 
+	loggerMutex.Lock()
 	println(sb.String())
+	loggerMutex.Unlock()
+
 }
 
 func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
@@ -81,10 +121,9 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
 	question := request.Question[0]
 
-	logger(id, "QUERY", question)
-
 	switch question.Name {
 	case "localhost.":
+		logger(id, "LOCAL", question)
 		switch question.Qtype {
 		case dns.TypeA:
 			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
