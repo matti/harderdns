@@ -52,9 +52,46 @@ func harder(id string, question dns.Question) *dns.Msg {
 					// if retry 0 records AND one retry left
 					if retry && try+1 < tries && len(response.Answer) == 0 {
 						logger(id, "NOT", question, upstream, rtt.String(), strconv.Itoa(try))
+						log.Println(
+							"Answer", response.Answer,
+							"AuthenticatedData", response.AuthenticatedData,
+							"Authoritative", response.Authoritative,
+							"CheckingDisabled", response.CheckingDisabled,
+							"Compress", response.Compress,
+							"Extra", response.Extra,
+							"Id", response.Id,
+							"MsgHdr", response.MsgHdr,
+							"Ns", response.Ns,
+							"Opcode", response.Opcode,
+							"Question", response.Question,
+							"Rcode", response.Rcode,
+							"RecursionAvailable", response.RecursionAvailable,
+							"RecursionDesired", response.RecursionDesired,
+							"Response", response.Response,
+							"Truncated", response.Truncated,
+							"Zero", response.Zero,
+						)
 					} else {
 						logger(id, "GOT", question, upstream, rtt.String(), strconv.Itoa(try))
-
+						log.Println(
+							"Answer", response.Answer,
+							"AuthenticatedData", response.AuthenticatedData,
+							"Authoritative", response.Authoritative,
+							"CheckingDisabled", response.CheckingDisabled,
+							"Compress", response.Compress,
+							"Extra", response.Extra,
+							"Id", response.Id,
+							"MsgHdr", response.MsgHdr,
+							"Ns", response.Ns,
+							"Opcode", response.Opcode,
+							"Question", response.Question,
+							"Rcode", response.Rcode,
+							"RecursionAvailable", response.RecursionAvailable,
+							"RecursionDesired", response.RecursionDesired,
+							"Response", response.Response,
+							"Truncated", response.Truncated,
+							"Zero", response.Zero,
+						)
 						responses <- response
 						return
 					}
