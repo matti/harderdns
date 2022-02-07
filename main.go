@@ -49,9 +49,15 @@ func harder(id string, question dns.Question) *dns.Msg {
 				}
 
 				if err == nil {
-					logger(id, "GOT", question, upstream, rtt.String())
-					responses <- response
-					return
+					// if retry 0 records AND one retry left
+					if retry && try+1 < tries && len(response.Answer) == 0 {
+						logger(id, "NOT", question, upstream, rtt.String(), strconv.Itoa(try))
+					} else {
+						logger(id, "GOT", question, upstream, rtt.String(), strconv.Itoa(try))
+
+						responses <- response
+						return
+					}
 				} else {
 					logger(id, "ERROR", question, upstream, fmt.Sprintf("%v", err)+" "+rtt.String())
 				}
