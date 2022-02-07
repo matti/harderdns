@@ -162,10 +162,11 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	default:
 		response := harder(id, question)
 		if response != nil {
-			final.Answer = response.Answer
-			final.Ns = response.Ns
-			final.Extra = response.Extra
-			final.SetRcode(request, response.Rcode)
+			final = response
+			// final.Answer = response.Answer
+			// final.Ns = response.Ns
+			// final.Extra = response.Extra
+			// final.SetRcode(request, response.Rcode)
 		} else {
 			final.SetRcode(request, dns.RcodeServerFailure)
 		}
