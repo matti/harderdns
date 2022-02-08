@@ -13,7 +13,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, error) {
+func resolve(upstream string, question dns.Question, recursionDesired bool) (*dns.Msg, time.Duration, error) {
 	c := dns.Client{
 		DialTimeout:  dialTimeout,
 		ReadTimeout:  readTimeout,
@@ -24,16 +24,16 @@ func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, e
 
 	query := &dns.Msg{}
 	query.SetQuestion(question.Name, question.Qtype)
+	query.RecursionDesired = recursionDesired
 
 	if edns0 > -1 {
-		log.Println("setting edns0", edns0)
 		query.SetEdns0(uint16(edns0), false)
 	}
 
 	return c.Exchange(query, upstream)
 }
 
-func harder(id string, question dns.Question) *dns.Msg {
+func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 	stop := false
 	responses := make(chan *dns.Msg, len(upstreams))
 
@@ -45,7 +45,7 @@ func harder(id string, question dns.Question) *dns.Msg {
 				if stop {
 					return
 				}
-				response, rtt, err := resolve(upstream, question)
+				response, rtt, err := resolve(upstream, question, recursionDesired)
 				if stop {
 					return
 				}
@@ -170,8 +170,8 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 		final = createResponse(rr)
 
 	default:
-		logger(id, "QUERY", question)
-		response := harder(id, question)
+		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
+		response := harder(id, question, request.RecursionDesired)
 		if response != nil {
 			final = response
 		} else {
