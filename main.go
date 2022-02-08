@@ -26,6 +26,7 @@ func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, e
 	query.SetQuestion(question.Name, question.Qtype)
 
 	if edns0 > -1 {
+		log.Println("setting edns0", edns0)
 		query.SetEdns0(uint16(edns0), false)
 	}
 
