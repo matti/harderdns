@@ -25,27 +25,16 @@ func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, e
 	query := &dns.Msg{}
 	query.SetQuestion(question.Name, question.Qtype)
 
-	// opt := query.IsEdns0()
-	// if opt == nil {
-	// 	query.SetEdns0(1024, false)
-	// } else {
-	// 	opt.SetUDPSize(1024)
-	// }
-	// if edns0 > -1 {
-	// 	query.SetEdns0(1024, false)
-	// }
+	if edns0 > -1 {
+		query.SetEdns0(uint16(edns0), false)
+	}
 
 	return c.Exchange(query, upstream)
 }
 
 func harder(id string, question dns.Question) *dns.Msg {
-	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
-
 	stop := false
-
 	responses := make(chan *dns.Msg, len(upstreams))
-
-	logger(id, "QUERY", question)
 
 	for _, upstream := range upstreams {
 		go func(upstream string, question dns.Question) {
@@ -156,8 +145,10 @@ func createResponse(rr dns.RR) *dns.Msg {
 func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	var final *dns.Msg
 	id := uuid.New().String()
+
 	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
 	question := request.Question[0]
+
 	if request.Opcode != dns.OpcodeQuery {
 		logger(id, "UNKNOWN", question, dns.OpcodeToString[request.Opcode])
 		w.WriteMsg(createResponse(nil))
