@@ -24,11 +24,23 @@ func resolve(upstream string, question dns.Question) (*dns.Msg, time.Duration, e
 
 	query := &dns.Msg{}
 	query.SetQuestion(question.Name, question.Qtype)
-	query.SetEdns0(4096, false)
+
+	// opt := query.IsEdns0()
+	// if opt == nil {
+	// 	query.SetEdns0(1024, false)
+	// } else {
+	// 	opt.SetUDPSize(1024)
+	// }
+	// if edns0 > -1 {
+	// 	query.SetEdns0(1024, false)
+	// }
+
 	return c.Exchange(query, upstream)
 }
 
 func harder(id string, question dns.Question) *dns.Msg {
+	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
+
 	stop := false
 
 	responses := make(chan *dns.Msg, len(upstreams))
@@ -49,9 +61,8 @@ func harder(id string, question dns.Question) *dns.Msg {
 				}
 
 				if err == nil {
-					// if retry 0 records AND one retry left
-					if retry && try+1 < tries && len(response.Answer) == 0 {
-						logger(id, "NOT", question, upstream, rtt.String(), strconv.Itoa(try))
+					if response.Truncated {
+						logger(id, "TRUNC", question, upstream, rtt.String(), strconv.Itoa(try))
 						// log.Println(
 						// 	"Answer", response.Answer,
 						// 	"AuthenticatedData", response.AuthenticatedData,
@@ -132,52 +143,59 @@ func logger(id string, kind string, question dns.Question, parts ...string) {
 
 }
 
-func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
-	id := uuid.New().String()
-
-	final := new(dns.Msg)
-	final.SetReply(request)
-	final.Compress = false
-	final.RecursionAvailable = true
-
-	if request.Opcode != dns.OpcodeQuery {
-		w.WriteMsg(final)
-		return
+func createResponse(rr dns.RR) *dns.Msg {
+	response := new(dns.Msg)
+	response.Compress = false
+	response.RecursionAvailable = true
+	if rr != nil {
+		response.Answer = append(response.Answer, rr)
 	}
+	return response
+}
 
+func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
+	var final *dns.Msg
+	id := uuid.New().String()
 	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
 	question := request.Question[0]
+	if request.Opcode != dns.OpcodeQuery {
+		logger(id, "UNKNOWN", question, dns.OpcodeToString[request.Opcode])
+		w.WriteMsg(createResponse(nil))
+		return
+	}
 
 	switch question.Name {
 	case "localhost.":
 		logger(id, "LOCAL", question)
+		var rr dns.RR
 		switch question.Qtype {
 		case dns.TypeA:
-			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
-			final.Answer = append(final.Answer, rr)
+			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
 		case dns.TypeAAAA:
-			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
-			final.Answer = append(final.Answer, rr)
+			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
 		}
+
+		final = createResponse(rr)
+
 	default:
+		logger(id, "QUERY", question)
 		response := harder(id, question)
 		if response != nil {
 			final = response
-			// final.Answer = response.Answer
-			// final.Ns = response.Ns
-			// final.Extra = response.Extra
-			// final.SetRcode(request, response.Rcode)
 		} else {
+			final = createResponse(nil)
 			final.SetRcode(request, dns.RcodeServerFailure)
 		}
 	}
+
 	answers := strconv.Itoa(len(final.Answer))
 	nss := strconv.Itoa(len(final.Ns))
 	extras := strconv.Itoa(len(final.Extra))
 
 	logger(id, "ANSWER", question, dns.RcodeToString[final.Rcode], answers+","+nss+","+extras)
-	w.WriteMsg(final)
 
+	final.SetReply(request)
+	w.WriteMsg(final)
 }
 
 var upstreams []string
@@ -189,6 +207,7 @@ var delay time.Duration
 var tries int
 var retry bool
 var net string
+var edns0 int
 
 var errors map[string]int
 
@@ -201,6 +220,9 @@ func main() {
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
 	flag.StringVar(&net, "net", "udp", "udp, tcp, tcp-tls")
+
+	flag.IntVar(&edns0, "edns0", -1, "edns0")
+
 	flag.Parse()
 
 	dialTimeout = time.Millisecond * time.Duration(*dialTimeoutMs)
