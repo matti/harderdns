@@ -13,13 +13,13 @@ import (
 	"github.com/miekg/dns"
 )
 
-func resolve(upstream string, question dns.Question, recursionDesired bool) (*dns.Msg, time.Duration, error) {
+func resolve(upstream string, question dns.Question, recursionDesired bool, currentNet string) (*dns.Msg, time.Duration, error) {
 	c := dns.Client{
 		DialTimeout:  dialTimeout,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 
-		Net: net,
+		Net: currentNet,
 	}
 
 	query := &dns.Msg{}
@@ -33,6 +33,15 @@ func resolve(upstream string, question dns.Question, recursionDesired bool) (*dn
 	return c.Exchange(query, upstream)
 }
 
+var eventMutex sync.Mutex
+
+func event(upstream string, name string) {
+	defer eventMutex.Unlock()
+
+	eventMutex.Lock()
+	events[upstream][name] = events[upstream][name] + 1
+}
+
 func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 	stop := false
 	responses := make(chan *dns.Msg, len(upstreams))
@@ -40,19 +49,23 @@ func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 	for _, upstream := range upstreams {
 		go func(upstream string, question dns.Question) {
 			try := 0
-
+			currentNet := net
 			for try < tries {
 				if stop {
 					return
 				}
-				response, rtt, err := resolve(upstream, question, recursionDesired)
+				response, rtt, err := resolve(upstream, question, recursionDesired, currentNet)
 				if stop {
 					return
 				}
 
 				if err == nil {
 					if response.Truncated {
+						event(upstream, "trunc")
 						logger(id, "TRUNC", question, upstream, rtt.String(), strconv.Itoa(try))
+						// https://serverfault.com/questions/991520/how-is-truncation-performed-in-dns-according-to-rfc-1035/991563#991563
+						currentNet = "tcp"
+
 						// log.Println(
 						// 	"Answer", response.Answer,
 						// 	"AuthenticatedData", response.AuthenticatedData,
@@ -73,11 +86,13 @@ func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 						// 	"Zero", response.Zero,
 						// )
 					} else {
+						event(upstream, "got")
 						logger(id, "GOT", question, upstream, rtt.String(), strconv.Itoa(try))
 						responses <- response
 						return
 					}
 				} else {
+					event(upstream, "error")
 					logger(id, "ERROR", question, upstream, fmt.Sprintf("%v", err)+" "+rtt.String())
 				}
 
@@ -200,8 +215,8 @@ var tries int
 var retry bool
 var net string
 var edns0 int
-
-var errors map[string]int
+var stats int
+var events map[string]map[string]int
 
 func main() {
 	dialTimeoutMs := flag.Int("dialTimeout", 101, "dialTimeout")
@@ -214,6 +229,7 @@ func main() {
 	flag.StringVar(&net, "net", "udp", "udp, tcp, tcp-tls")
 
 	flag.IntVar(&edns0, "edns0", -1, "edns0")
+	flag.IntVar(&stats, "stats", -1, "print stats every N seconds")
 
 	flag.Parse()
 
@@ -222,16 +238,31 @@ func main() {
 	writeTimeout = time.Millisecond * time.Duration(*writeTimeoutMs)
 
 	delay = time.Millisecond * time.Duration(*delayMs)
+	statsDelay := time.Second * time.Duration(stats)
 
 	upstreams = flag.Args()
 	if len(upstreams) == 0 {
 		log.Fatalln("no upstreams")
 	}
 
-	errors = make(map[string]int)
+	events = make(map[string]map[string]int)
 	for _, upstream := range upstreams {
-		errors[upstream] = 0
+		events[upstream] = make(map[string]int)
 	}
+
+	go func() {
+		if statsDelay < 0 {
+			return
+		}
+		for {
+			for _, upstream := range upstreams {
+				loggerMutex.Lock()
+				log.Println("upstream", upstream, "got", events[upstream]["got"], "error", events[upstream]["error"], "trunc", events[upstream]["trunc"])
+				loggerMutex.Unlock()
+			}
+			time.Sleep(statsDelay)
+		}
+	}()
 
 	dns.HandleFunc(".", handleDnsRequest)
 
