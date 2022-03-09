@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -221,6 +222,32 @@ var stats int
 var events map[string]map[string]int
 
 func main() {
+	log.Println(os.Args)
+	if len(os.Args) > 1 && os.Args[1] == "test" {
+		name := os.Args[2]
+		for {
+			const timeout = 100 * time.Millisecond
+			ctx, _ := context.WithTimeout(context.TODO(), timeout)
+
+			var r net.Resolver
+			startedAt := time.Now()
+			ips, err := r.LookupIP(ctx, "ip4", name)
+			if err != nil {
+				log.Println("test error", err)
+			} else {
+				log.Println("test", name, "resolves", ips)
+				os.Exit(0)
+			}
+
+			took := time.Since(startedAt)
+			remaining := (time.Millisecond * 100) - took
+
+			if remaining > 0 {
+				time.Sleep(remaining)
+			}
+		}
+	}
+
 	dialTimeoutMs := flag.Int("dialTimeout", 101, "dialTimeout")
 	readTimeoutMs := flag.Int("readTimeout", 500, "readTimeout")
 	writeTimeoutMs := flag.Int("writeTimeout", 500, "writeTimeout")
@@ -241,17 +268,6 @@ func main() {
 
 	delay = time.Millisecond * time.Duration(*delayMs)
 	statsDelay := time.Second * time.Duration(stats)
-
-	if len(flag.Args()) == 2 && flag.Args()[0] == "test" {
-		name := os.Args[2]
-		ips, err := net.LookupIP(name)
-		if err != nil {
-			log.Println("test error", err)
-			os.Exit(1)
-		}
-		log.Println("test", name, "resolves", ips)
-		os.Exit(0)
-	}
 
 	upstreams = flag.Args()
 	if len(upstreams) == 0 {
