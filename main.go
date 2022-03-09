@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,7 +51,7 @@ func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 	for _, upstream := range upstreams {
 		go func(upstream string, question dns.Question) {
 			try := 0
-			currentNet := net
+			currentNet := netMode
 			for try < tries {
 				if stop {
 					return
@@ -213,7 +215,7 @@ var writeTimeout time.Duration
 var delay time.Duration
 var tries int
 var retry bool
-var net string
+var netMode string
 var edns0 int
 var stats int
 var events map[string]map[string]int
@@ -226,7 +228,7 @@ func main() {
 	delayMs := flag.Int("delay", 10, "delay in ms")
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
-	flag.StringVar(&net, "net", "udp", "udp, tcp, tcp-tls")
+	flag.StringVar(&netMode, "netMode", "udp", "udp, tcp, tcp-tls")
 
 	flag.IntVar(&edns0, "edns0", -1, "edns0")
 	flag.IntVar(&stats, "stats", -1, "print stats every N seconds")
@@ -239,6 +241,17 @@ func main() {
 
 	delay = time.Millisecond * time.Duration(*delayMs)
 	statsDelay := time.Second * time.Duration(stats)
+
+	if len(flag.Args()) == 2 && flag.Args()[0] == "test" {
+		name := os.Args[2]
+		ips, err := net.LookupIP(name)
+		if err != nil {
+			log.Println("test error", err)
+			os.Exit(1)
+		}
+		log.Println("test", name, "resolves", ips)
+		os.Exit(0)
+	}
 
 	upstreams = flag.Args()
 	if len(upstreams) == 0 {
@@ -273,7 +286,7 @@ func main() {
 	}
 	defer server.Shutdown()
 
-	log.Printf("Starting at :%d using %s\n", port, net)
+	log.Printf("Starting at :%d using %s\n", port, netMode)
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatalf("Failed to start server: %s\n ", err.Error())
