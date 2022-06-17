@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/libnetwork/resolvconf"
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
 )
@@ -45,11 +47,11 @@ func event(upstream string, name string) {
 	events[upstream][name] = events[upstream][name] + 1
 }
 
-func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
+func harder(id string, question dns.Question, recursionDesired bool, currentUpstreams []string) *dns.Msg {
 	stop := false
-	responses := make(chan *dns.Msg, len(upstreams))
+	responses := make(chan *dns.Msg, len(currentUpstreams))
 
-	for _, upstream := range upstreams {
+	for _, upstream := range currentUpstreams {
 		go func(upstream string, question dns.Question) {
 			try := 0
 			currentNet := netMode
@@ -117,7 +119,7 @@ func harder(id string, question dns.Question, recursionDesired bool) *dns.Msg {
 			break
 		}
 
-		if received == len(upstreams) {
+		if received == len(currentUpstreams) {
 			break
 		}
 	}
@@ -189,7 +191,15 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 
 	default:
 		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
-		response := harder(id, question, request.RecursionDesired)
+
+		var currentUpstreams []string
+		if strings.Count(question.Name, ".") == 1 {
+			println("sellanen")
+			currentUpstreams = resolvUpstreams
+		} else {
+			currentUpstreams = upstreams
+		}
+		response := harder(id, question, request.RecursionDesired, currentUpstreams)
 		if response != nil {
 			final = response
 		} else {
@@ -220,6 +230,8 @@ var netMode string
 var edns0 int
 var stats int
 var events map[string]map[string]int
+var resolv bool
+var resolvUpstreams []string
 
 func main() {
 	log.Println(os.Args)
@@ -260,6 +272,7 @@ func main() {
 	flag.IntVar(&edns0, "edns0", -1, "edns0")
 	flag.IntVar(&stats, "stats", -1, "print stats every N seconds")
 
+	flag.BoolVar(&resolv, "resolv", false, "resolv")
 	flag.Parse()
 
 	dialTimeout = time.Millisecond * time.Duration(*dialTimeoutMs)
@@ -273,9 +286,23 @@ func main() {
 	if len(upstreams) == 0 {
 		log.Fatalln("no upstreams")
 	}
+	if resolv {
+		f, err := resolvconf.Get()
+		if err != nil {
+			log.Fatalln("failed to read resolvconf")
+		}
 
+		for _, resolvUpstream := range resolvconf.GetNameservers(f.Content) {
+			resolvUpstreams = append(resolvUpstreams, resolvUpstream+":53")
+		}
+
+		err = ioutil.WriteFile("/etc/resolv.conf", []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
+		if err != nil {
+			log.Fatalln("failed to write /etc/resolv.conf")
+		}
+	}
 	events = make(map[string]map[string]int)
-	for _, upstream := range upstreams {
+	for _, upstream := range append(upstreams, resolvUpstreams...) {
 		events[upstream] = make(map[string]int)
 	}
 
@@ -284,11 +311,14 @@ func main() {
 			return
 		}
 		for {
+			loggerMutex.Lock()
 			for _, upstream := range upstreams {
-				loggerMutex.Lock()
 				log.Println("upstream", upstream, "got", events[upstream]["got"], "error", events[upstream]["error"], "trunc", events[upstream]["trunc"])
-				loggerMutex.Unlock()
 			}
+			for _, resolvUpstream := range resolvUpstreams {
+				log.Println("upstream", resolvUpstream, "got", events[resolvUpstream]["got"], "error", events[resolvUpstream]["error"], "trunc", events[resolvUpstream]["trunc"])
+			}
+			loggerMutex.Unlock()
 			time.Sleep(statsDelay)
 		}
 	}()
