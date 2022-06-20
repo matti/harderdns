@@ -190,15 +190,14 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 		final = createResponse(rr)
 
 	default:
-		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
-
 		var currentUpstreams []string
 		if strings.Count(question.Name, ".") == 1 {
-			println("sellanen")
+			question.Name = question.Name + resolvSearch + "."
 			currentUpstreams = resolvUpstreams
 		} else {
 			currentUpstreams = upstreams
 		}
+		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
 		response := harder(id, question, request.RecursionDesired, currentUpstreams)
 		if response != nil {
 			final = response
@@ -232,6 +231,8 @@ var stats int
 var events map[string]map[string]int
 var resolv bool
 var resolvUpstreams []string
+var resolvSearch string
+var devMode bool
 
 func main() {
 	log.Println(os.Args)
@@ -273,6 +274,8 @@ func main() {
 	flag.IntVar(&stats, "stats", -1, "print stats every N seconds")
 
 	flag.BoolVar(&resolv, "resolv", false, "resolv")
+	flag.StringVar(&resolvSearch, "resolvSearch", "", "resolvSearch")
+	flag.BoolVar(&devMode, "devMode", false, "devMode")
 	flag.Parse()
 
 	dialTimeout = time.Millisecond * time.Duration(*dialTimeoutMs)
@@ -293,12 +296,21 @@ func main() {
 		}
 
 		for _, resolvUpstream := range resolvconf.GetNameservers(f.Content) {
+			if resolvUpstream == "127.0.0.1" {
+				continue
+			}
 			resolvUpstreams = append(resolvUpstreams, resolvUpstream+":53")
 		}
 
-		err = ioutil.WriteFile("/etc/resolv.conf", []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
+		var currentResolvConf string
+		if devMode {
+			currentResolvConf = "/tmp/resolv.conf"
+		} else {
+			currentResolvConf = "/etc/resolv.conf"
+		}
+		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
 		if err != nil {
-			log.Fatalln("failed to write /etc/resolv.conf")
+			log.Fatalln("failed to write " + currentResolvConf)
 		}
 	}
 	events = make(map[string]map[string]int)
