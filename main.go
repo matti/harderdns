@@ -192,7 +192,9 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	default:
 		var currentUpstreams []string
 		if strings.Count(question.Name, ".") == 1 {
-			question.Name = question.Name + resolvSearch + "."
+			if resolvSearch != "" {
+				question.Name = question.Name + resolvSearch + "."
+			}
 			currentUpstreams = resolvUpstreams
 		} else {
 			currentUpstreams = upstreams
