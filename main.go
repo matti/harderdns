@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/libnetwork/resolvconf"
 	"github.com/google/uuid"
 	"github.com/miekg/dns"
@@ -292,9 +294,28 @@ func main() {
 		log.Fatalln("no upstreams")
 	}
 	if resolv {
-		f, err := resolvconf.Get()
+		var currentResolvConf string
+		if devMode {
+			currentResolvConf = "/tmp/resolv.conf"
+			err := ioutil.WriteFile(currentResolvConf, []byte("# before harderdns\nnameserver 138.197.68.199\n"), 06644)
+			if err != nil {
+				log.Fatalln("failed to write ", currentResolvConf, "err", err)
+			}
+		} else {
+			currentResolvConf = "/etc/resolv.conf"
+		}
+
+		resolvContents, err := ioutil.ReadFile(currentResolvConf)
 		if err != nil {
-			log.Fatalln("failed to read resolvconf")
+			log.Fatalln("failed to read", currentResolvConf, err)
+		}
+		resolvHash, err := ioutils.HashData(bytes.NewReader(resolvContents))
+		if err != nil {
+			log.Fatalln("failed to hash", resolvContents, err)
+		}
+		f := resolvconf.File{
+			Content: resolvContents,
+			Hash:    resolvHash,
 		}
 
 		for _, resolvUpstream := range resolvconf.GetNameservers(f.Content) {
@@ -304,12 +325,6 @@ func main() {
 			resolvUpstreams = append(resolvUpstreams, resolvUpstream+":53")
 		}
 
-		var currentResolvConf string
-		if devMode {
-			currentResolvConf = "/tmp/resolv.conf"
-		} else {
-			currentResolvConf = "/etc/resolv.conf"
-		}
 		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
 		if err != nil {
 			log.Fatalln("failed to write " + currentResolvConf)
