@@ -104,8 +104,15 @@ func harder(id string, question dns.Question, recursionDesired bool, currentUpst
 				}
 
 				try = try + 1
-				time.Sleep(delay)
-				logger(id, "RETRY", question, upstream, strconv.Itoa(try))
+				// retry truncated instantly
+				if response == nil {
+					time.Sleep(delay)
+				}
+
+				if currentNet == "udp" {
+					currentNet = "tcp"
+				}
+				logger(id, "RETRY", question, upstream, currentNet, strconv.Itoa(try))
 			}
 
 			responses <- nil
