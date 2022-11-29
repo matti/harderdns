@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/IGLOU-EU/go-wildcard v1.0.3 // indirect
 	github.com/Sirupsen/logrus v1.0.6 // indirect
 	github.com/docker/docker v20.10.17+incompatible // indirect
 	github.com/docker/libnetwork v0.5.6 // indirect

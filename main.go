@@ -3,17 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	wildcard "github.com/IGLOU-EU/go-wildcard"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/libnetwork/resolvconf"
 	"github.com/google/uuid"
@@ -161,20 +165,35 @@ func logger(id string, kind string, question dns.Question, parts ...string) {
 	loggerMutex.Unlock()
 
 }
+func reloadHosts(hostsPath string) {
+	if hostsPath == "" {
+		return
+	}
 
-func createResponse(rr dns.RR) *dns.Msg {
+	if b, err := ioutil.ReadFile(hostsPath); err != nil {
+		log.Fatalln("failed to read", hostsPath, err)
+	} else {
+		if err := json.Unmarshal(b, &hosts); err != nil {
+			log.Fatalln("failed to parse", hostsPath, err)
+		}
+	}
+}
+
+func createResponse(rrs []dns.RR) *dns.Msg {
 	response := new(dns.Msg)
 	response.Compress = false
 	response.RecursionAvailable = true
-	if rr != nil {
+
+	for _, rr := range rrs {
 		response.Answer = append(response.Answer, rr)
 	}
+
 	return response
 }
 
 func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
-	var final *dns.Msg
 	id := uuid.New().String()
+	var final *dns.Msg
 
 	// https://stackoverflow.com/questions/55092830/how-to-perform-dns-lookup-with-multiple-questions
 	question := request.Question[0]
@@ -196,9 +215,30 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
 		}
 
-		final = createResponse(rr)
+		final = createResponse([]dns.RR{rr})
+	}
 
-	default:
+	if final == nil {
+		switch question.Qtype {
+		case dns.TypeA, dns.TypeAAAA:
+			log.Println("perse", dns.Type(question.Qtype).String())
+
+			for host, values := range hosts[dns.Type(question.Qtype).String()] {
+				log.Println(host, question.Name)
+				if wildcard.Match(host, question.Name) {
+					var rrs []dns.RR
+					for _, value := range values {
+						rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN %s %s\n", question.Name, 3600, dns.Type(question.Qtype).String(), value))
+						rrs = append(rrs, rr)
+					}
+					final = createResponse(rrs)
+					break
+				}
+			}
+		}
+	}
+
+	if final == nil {
 		var currentUpstreams []string
 		if strings.Count(question.Name, ".") == 1 {
 			if resolvSearch != "" {
@@ -213,7 +253,7 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 		if response != nil {
 			final = response
 		} else {
-			final = createResponse(nil)
+			final = createResponse([]dns.RR{})
 			final.SetRcode(request, dns.RcodeServerFailure)
 		}
 	}
@@ -227,6 +267,8 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	final.SetReply(request)
 	w.WriteMsg(final)
 }
+
+var hosts = make(map[string]map[string][]string)
 
 var upstreams []string
 var dialTimeout time.Duration
@@ -287,7 +329,20 @@ func main() {
 	flag.BoolVar(&resolv, "resolv", false, "resolv")
 	flag.StringVar(&resolvSearch, "resolvSearch", "", "resolvSearch")
 	flag.BoolVar(&devMode, "devMode", false, "devMode")
+
+	var hostsPath string
+	flag.StringVar(&hostsPath, "hosts", "", "hosts")
+
 	flag.Parse()
+
+	reloadSigs := make(chan os.Signal, 1)
+	signal.Notify(reloadSigs, syscall.SIGHUP)
+	go func() {
+		for {
+			<-reloadSigs
+			reloadHosts(hostsPath)
+		}
+	}()
 
 	dialTimeout = time.Millisecond * time.Duration(*dialTimeoutMs)
 	readTimeout = time.Millisecond * time.Duration(*readTimeoutMs)
@@ -300,6 +355,7 @@ func main() {
 	if len(upstreams) == 0 {
 		log.Fatalln("no upstreams")
 	}
+
 	if resolv {
 		var currentResolvConf string
 		if devMode {
@@ -358,6 +414,8 @@ func main() {
 			time.Sleep(statsDelay)
 		}
 	}()
+
+	reloadHosts(hostsPath)
 
 	dns.HandleFunc(".", handleDnsRequest)
 

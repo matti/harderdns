@@ -1,9 +1,15 @@
 version: '3'
 
 services:
+  harderdns:
+    build: ..
+    image: harderdns:tests
+    command:
+      - 1.1.1.1:53
+      - 9.9.9.9:53
+
   app:
     build: .
     image: mattipaksula/harderdns:tests-user
-  harderdns:
-    build: ..
-    image: harderdns
+    depends_on:
+      - harderdns
