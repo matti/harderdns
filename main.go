@@ -221,11 +221,9 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	if final == nil {
 		switch question.Qtype {
 		case dns.TypeA, dns.TypeAAAA:
-			log.Println("perse", dns.Type(question.Qtype).String())
-
 			for host, values := range hosts[dns.Type(question.Qtype).String()] {
-				log.Println(host, question.Name)
 				if wildcard.Match(host, question.Name) {
+					logger(id, "HOSTS", question)
 					var rrs []dns.RR
 					for _, value := range values {
 						rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN %s %s\n", question.Name, 3600, dns.Type(question.Qtype).String(), value))
