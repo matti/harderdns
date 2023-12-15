@@ -96,6 +96,8 @@ func harder(id string, question dns.Question, recursionDesired bool, currentUpst
 						// 	"Truncated", response.Truncated,
 						// 	"Zero", response.Zero,
 						// )
+					} else if len(response.Answer) == 0 {
+						logger(id, "EMPTY", question, upstream, rtt.String(), strconv.Itoa(try))
 					} else {
 						event(upstream, "got")
 						logger(id, "GOT", question, upstream, rtt.String(), strconv.Itoa(try))
