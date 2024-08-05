@@ -421,7 +421,7 @@ func main() {
 
 	port := 53
 	server := &dns.Server{
-		Addr: ":" + strconv.Itoa(port),
+		Addr: "0.0.0.0:" + strconv.Itoa(port),
 		Net:  "udp",
 	}
 	defer server.Shutdown()
