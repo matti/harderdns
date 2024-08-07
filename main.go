@@ -363,8 +363,8 @@ func main() {
 	readTimeoutMs := flag.Int("readTimeout", 500, "readTimeout")
 	writeTimeoutMs := flag.Int("writeTimeout", 500, "writeTimeout")
 
-	delayMs := flag.Int("delay", 10, "delay in ms")
-	concurrencyDelayMs := flag.Int("concurrencyDelay", 0, "concurrency delay in ms, first upstream immediately and then add every delay")
+	delayMs := flag.Int("delay", 10, "retry delay in ms")
+	concurrencyDelayMs := flag.Int("concurrencyDelay", 0, "concurrency delay in ms, first upstream immediately and then add every delay (default 0)")
 
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
