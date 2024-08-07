@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"os/signal"
@@ -54,20 +55,44 @@ func event(upstream string, name string) {
 }
 
 func harder(id string, question dns.Question, recursionDesired bool, currentUpstreams []string) *dns.Msg {
-	stop := false
-	responses := make(chan *dns.Msg, len(currentUpstreams))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	for _, upstream := range currentUpstreams {
-		go func(upstream string, question dns.Question) {
+	shuffledUpstreams := make([]string, len(currentUpstreams))
+	copy(shuffledUpstreams, currentUpstreams)
+
+	rand.Shuffle(len(shuffledUpstreams), func(i, j int) {
+		shuffledUpstreams[i], shuffledUpstreams[j] = shuffledUpstreams[j], shuffledUpstreams[i]
+	})
+
+	responses := make(chan *dns.Msg, len(shuffledUpstreams))
+
+	for i, upstream := range shuffledUpstreams {
+		go func(index int, upstream string, question dns.Question) {
+			if concurrencyDelay > 0 {
+				myConcurrencyDelay := time.Duration(concurrencyDelay) * time.Duration(index)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(myConcurrencyDelay):
+				}
+			}
+
 			try := 0
 			currentNet := netMode
 			for try < tries {
-				if stop {
+				select {
+				case <-ctx.Done():
 					return
+				default:
 				}
+
 				response, rtt, err := resolve(upstream, question, recursionDesired, currentNet)
-				if stop {
+
+				select {
+				case <-ctx.Done():
 					return
+				default:
 				}
 
 				if err == nil {
@@ -115,10 +140,22 @@ func harder(id string, question dns.Question, recursionDesired bool, currentUpst
 					logger(id, "ERROR", question, upstream, fmt.Sprintf("%v", err)+" "+rtt.String())
 				}
 
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
 				try = try + 1
 				// retry truncated instantly
 				if response == nil {
 					time.Sleep(delay)
+				}
+
+				select {
+				case <-ctx.Done():
+					return
+				default:
 				}
 
 				if currentNet == "udp" {
@@ -128,7 +165,7 @@ func harder(id string, question dns.Question, recursionDesired bool, currentUpst
 			}
 
 			responses <- nil
-		}(upstream, question)
+		}(i, upstream, question)
 	}
 
 	received := 0
@@ -140,12 +177,11 @@ func harder(id string, question dns.Question, recursionDesired bool, currentUpst
 			break
 		}
 
-		if received == len(currentUpstreams) {
+		if received == len(shuffledUpstreams) {
 			break
 		}
 	}
 
-	stop = true
 	return final
 }
 
@@ -254,8 +290,10 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 		} else {
 			currentUpstreams = upstreams
 		}
+
 		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
 		response := harder(id, question, request.RecursionDesired, currentUpstreams)
+
 		if response != nil {
 			final = response
 		} else {
@@ -282,6 +320,7 @@ var readTimeout time.Duration
 var writeTimeout time.Duration
 
 var delay time.Duration
+var concurrencyDelay time.Duration
 var tries int
 var retry bool
 var netMode string
@@ -325,6 +364,8 @@ func main() {
 	writeTimeoutMs := flag.Int("writeTimeout", 500, "writeTimeout")
 
 	delayMs := flag.Int("delay", 10, "delay in ms")
+	concurrencyDelayMs := flag.Int("concurrencyDelay", 0, "concurrency delay in ms, first upstream immediately and then add every delay")
+
 	flag.IntVar(&tries, "tries", 3, "tries")
 	flag.BoolVar(&retry, "retry", false, "retry")
 	flag.StringVar(&netMode, "netMode", "udp", "udp, tcp, tcp-tls")
@@ -355,6 +396,7 @@ func main() {
 	writeTimeout = time.Millisecond * time.Duration(*writeTimeoutMs)
 
 	delay = time.Millisecond * time.Duration(*delayMs)
+	concurrencyDelay = time.Millisecond * time.Duration(*concurrencyDelayMs)
 	statsDelay := time.Second * time.Duration(stats)
 
 	upstreams = flag.Args()
