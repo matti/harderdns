@@ -291,7 +291,7 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 			currentUpstreams = upstreams
 		}
 
-		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired))
+		logger(id, "QUERY", question, "recursion", strconv.FormatBool(request.RecursionDesired), w.RemoteAddr().String())
 		response := harder(id, question, request.RecursionDesired, currentUpstreams)
 
 		if response != nil {
