@@ -451,14 +451,14 @@ func main() {
 			return
 		}
 		for {
-			loggerMutex.Lock()
+			eventMutex.Lock()
 			for _, upstream := range upstreams {
 				log.Println("upstream", upstream, "got", events[upstream]["got"], "error", events[upstream]["error"], "trunc", events[upstream]["trunc"])
 			}
 			for _, resolvUpstream := range resolvUpstreams {
 				log.Println("upstream", resolvUpstream, "got", events[resolvUpstream]["got"], "error", events[resolvUpstream]["error"], "trunc", events[resolvUpstream]["trunc"])
 			}
-			loggerMutex.Unlock()
+			eventMutex.Unlock()
 			time.Sleep(statsDelay)
 		}
 	}()

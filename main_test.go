@@ -147,22 +147,21 @@ func TestEventsRaceWithStats(t *testing.T) {
 		}()
 	}
 
-	// Reader goroutines simulating stats - reads under loggerMutex
-	// This is what the stats goroutine does in main()
-	// BUG: uses loggerMutex instead of eventMutex, so reads are unprotected
-	// against concurrent writes from event()
+	// Reader goroutines simulating stats - reads under eventMutex
+	// This matches the fixed stats goroutine in main() which now
+	// correctly uses eventMutex (same mutex as event() writes)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				loggerMutex.Lock()
+				eventMutex.Lock()
 				for _, u := range ups {
 					_ = events[u]["got"]
 					_ = events[u]["error"]
 					_ = events[u]["trunc"]
 				}
-				loggerMutex.Unlock()
+				eventMutex.Unlock()
 			}
 		}()
 	}
