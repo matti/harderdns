@@ -362,18 +362,17 @@ func TestReloadHosts(t *testing.T) {
 	})
 }
 
-// TestFilePermissions documents the incorrect file permission values.
-// 06644 octal = setgid + rw-r--r-- which is unusual; should be 0644.
-// 06444 octal = setgid + r--r--r-- which is unusual; should be 0444.
+// TestFilePermissions verifies correct file permission values.
 func TestFilePermissions(t *testing.T) {
-	const perm1 = 06644 // used in main.go line 411
-	const perm2 = 06444 // used in main.go line 439
+	// Verify the permissions used in main.go are standard Unix permissions
+	// without setgid bit (which was the bug: 06644 instead of 0644)
+	const devPerm = 0644
+	const prodPerm = 0444
 
-	// These have the setgid bit set which is almost certainly unintentional
-	if perm1&02000 != 0 {
-		t.Log("WARNING: permission 06644 has setgid bit set, likely should be 0644")
+	if devPerm&02000 != 0 {
+		t.Fatal("dev permission should not have setgid bit")
 	}
-	if perm2&02000 != 0 {
-		t.Log("WARNING: permission 06444 has setgid bit set, likely should be 0444")
+	if prodPerm&02000 != 0 {
+		t.Fatal("prod permission should not have setgid bit")
 	}
 }

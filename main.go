@@ -408,7 +408,7 @@ func main() {
 		var currentResolvConf string
 		if devMode {
 			currentResolvConf = "/tmp/resolv.conf"
-			err := ioutil.WriteFile(currentResolvConf, []byte("# before harderdns\nnameserver 138.197.68.199\n"), 06644)
+			err := ioutil.WriteFile(currentResolvConf, []byte("# before harderdns\nnameserver 138.197.68.199\n"), 0644)
 			if err != nil {
 				log.Fatalln("failed to write ", currentResolvConf, "err", err)
 			}
@@ -436,7 +436,7 @@ func main() {
 			resolvUpstreams = append(resolvUpstreams, resolvUpstream+":53")
 		}
 
-		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
+		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 0444)
 		if err != nil {
 			log.Fatalln("failed to write " + currentResolvConf)
 		}
