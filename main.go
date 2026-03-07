@@ -338,11 +338,12 @@ func main() {
 		name := os.Args[2]
 		for {
 			const timeout = 100 * time.Millisecond
-			ctx, _ := context.WithTimeout(context.TODO(), timeout)
+			ctx, cancel := context.WithTimeout(context.TODO(), timeout)
 
 			var r net.Resolver
 			startedAt := time.Now()
 			ips, err := r.LookupIP(ctx, "ip4", name)
+			cancel()
 			if err != nil {
 				log.Println("test error", err)
 			} else {
