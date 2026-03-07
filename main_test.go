@@ -188,8 +188,9 @@ func TestHostsRace(t *testing.T) {
 				newHosts["A"] = map[string][]string{
 					"*.example.com.": {"1.2.3.4"},
 				}
-				// BUG: no synchronization on hosts global variable
+				hostsMutex.Lock()
 				hosts = newHosts
+				hostsMutex.Unlock()
 			}
 		}()
 	}
@@ -200,11 +201,13 @@ func TestHostsRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
+				hostsMutex.RLock()
 				localHosts := hosts
 				for host, values := range localHosts["A"] {
 					_ = host
 					_ = values
 				}
+				hostsMutex.RUnlock()
 			}
 		}()
 	}
@@ -239,32 +242,28 @@ func TestRandShuffleDeterministic(t *testing.T) {
 }
 
 // TestLocalhostNonAQuery tests that querying localhost with a
-// non-A/AAAA type doesn't produce a response with nil RR.
+// non-A/AAAA type returns an empty answer instead of a nil RR.
 func TestLocalhostNonAQuery(t *testing.T) {
-	// Simulate what handleDnsRequest does for localhost with MX query
 	question := dns.Question{
 		Name:   "localhost.",
 		Qtype:  dns.TypeMX,
 		Qclass: dns.ClassINET,
 	}
 
-	var rr dns.RR
+	// Simulate the fixed localhost handling
+	var rrs []dns.RR
 	switch question.Qtype {
 	case dns.TypeA:
-		rr, _ = dns.NewRR("localhost. 3600 IN A 127.0.0.1")
+		rr, _ := dns.NewRR("localhost. 3600 IN A 127.0.0.1")
+		rrs = append(rrs, rr)
 	case dns.TypeAAAA:
-		rr, _ = dns.NewRR("localhost. 3600 IN AAAA ::1")
+		rr, _ := dns.NewRR("localhost. 3600 IN AAAA ::1")
+		rrs = append(rrs, rr)
 	}
 
-	// rr is nil here because TypeMX doesn't match
-	if rr != nil {
-		t.Fatal("expected nil rr for non-A/AAAA localhost query")
-	}
-
-	// Creating a response with nil RR is the bug
-	resp := createResponse([]dns.RR{rr})
-	if resp.Answer[0] != nil {
-		t.Fatal("expected nil RR in answer - this is the bug")
+	resp := createResponse(rrs)
+	if len(resp.Answer) != 0 {
+		t.Fatalf("expected 0 answers for MX query on localhost, got %d", len(resp.Answer))
 	}
 }
 

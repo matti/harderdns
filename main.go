@@ -209,6 +209,8 @@ func logger(id string, kind string, question dns.Question, parts ...string) {
 	loggerMutex.Unlock()
 
 }
+var hostsMutex sync.RWMutex
+
 func reloadHosts(hostsPath string) {
 	if hostsPath == "" {
 		return
@@ -217,9 +219,12 @@ func reloadHosts(hostsPath string) {
 	if b, err := ioutil.ReadFile(hostsPath); err != nil {
 		log.Fatalln("failed to read", hostsPath, err)
 	} else {
+		hostsMutex.Lock()
 		if err := json.Unmarshal(b, &hosts); err != nil {
+			hostsMutex.Unlock()
 			log.Fatalln("failed to parse", hostsPath, err)
 		}
+		hostsMutex.Unlock()
 	}
 }
 
@@ -251,20 +256,23 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	switch question.Name {
 	case "localhost.":
 		logger(id, "LOCAL", question)
-		var rr dns.RR
+		var rrs []dns.RR
 		switch question.Qtype {
 		case dns.TypeA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			rrs = append(rrs, rr)
 		case dns.TypeAAAA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			rrs = append(rrs, rr)
 		}
 
-		final = createResponse([]dns.RR{rr})
+		final = createResponse(rrs)
 	}
 
 	if final == nil {
 		switch question.Qtype {
 		case dns.TypeA, dns.TypeAAAA:
+			hostsMutex.RLock()
 			for host, values := range hosts[dns.Type(question.Qtype).String()] {
 				if wildcard.Match(host, question.Name) {
 					logger(id, "HOSTS", question)
@@ -274,8 +282,12 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 						rrs = append(rrs, rr)
 					}
 					final = createResponse(rrs)
+					hostsMutex.RUnlock()
 					break
 				}
+			}
+			if final == nil {
+				hostsMutex.RUnlock()
 			}
 		}
 	}
