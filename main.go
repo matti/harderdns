@@ -255,15 +255,17 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	switch question.Name {
 	case "localhost.":
 		logger(id, "LOCAL", question)
-		var rr dns.RR
+		var rrs []dns.RR
 		switch question.Qtype {
 		case dns.TypeA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			rrs = append(rrs, rr)
 		case dns.TypeAAAA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			rrs = append(rrs, rr)
 		}
 
-		final = createResponse([]dns.RR{rr})
+		final = createResponse(rrs)
 	}
 
 	if final == nil {
