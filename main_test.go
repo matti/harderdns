@@ -188,8 +188,9 @@ func TestHostsRace(t *testing.T) {
 				newHosts["A"] = map[string][]string{
 					"*.example.com.": {"1.2.3.4"},
 				}
-				// BUG: no synchronization on hosts global variable
+				hostsMutex.Lock()
 				hosts = newHosts
+				hostsMutex.Unlock()
 			}
 		}()
 	}
@@ -200,11 +201,13 @@ func TestHostsRace(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
+				hostsMutex.RLock()
 				localHosts := hosts
 				for host, values := range localHosts["A"] {
 					_ = host
 					_ = values
 				}
+				hostsMutex.RUnlock()
 			}
 		}()
 	}

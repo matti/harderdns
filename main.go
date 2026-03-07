@@ -209,6 +209,9 @@ func logger(id string, kind string, question dns.Question, parts ...string) {
 	loggerMutex.Unlock()
 
 }
+
+var hostsMutex sync.RWMutex
+
 func reloadHosts(hostsPath string) {
 	if hostsPath == "" {
 		return
@@ -217,9 +220,12 @@ func reloadHosts(hostsPath string) {
 	if b, err := ioutil.ReadFile(hostsPath); err != nil {
 		log.Fatalln("failed to read", hostsPath, err)
 	} else {
+		hostsMutex.Lock()
 		if err := json.Unmarshal(b, &hosts); err != nil {
+			hostsMutex.Unlock()
 			log.Fatalln("failed to parse", hostsPath, err)
 		}
+		hostsMutex.Unlock()
 	}
 }
 
@@ -265,6 +271,7 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	if final == nil {
 		switch question.Qtype {
 		case dns.TypeA, dns.TypeAAAA:
+			hostsMutex.RLock()
 			for host, values := range hosts[dns.Type(question.Qtype).String()] {
 				if wildcard.Match(host, question.Name) {
 					logger(id, "HOSTS", question)
@@ -274,8 +281,12 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 						rrs = append(rrs, rr)
 					}
 					final = createResponse(rrs)
+					hostsMutex.RUnlock()
 					break
 				}
+			}
+			if final == nil {
+				hostsMutex.RUnlock()
 			}
 		}
 	}
