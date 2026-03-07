@@ -288,19 +288,19 @@ func TestEventsRaceWithStats(t *testing.T) {
 		}()
 	}
 
-	// BUG: reads under loggerMutex, writes under eventMutex
+	// Stats reads now correctly use eventMutex (matching the fix)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				loggerMutex.Lock()
+				eventMutex.Lock()
 				for _, u := range ups {
 					_ = events[u]["got"]
 					_ = events[u]["error"]
 					_ = events[u]["trunc"]
 				}
-				loggerMutex.Unlock()
+				eventMutex.Unlock()
 			}
 		}()
 	}
@@ -309,10 +309,13 @@ func TestEventsRaceWithStats(t *testing.T) {
 }
 
 func TestHostsRace(t *testing.T) {
+	hostsMutex.Lock()
 	hosts = make(map[string]map[string][]string)
+	hostsMutex.Unlock()
 
 	var wg sync.WaitGroup
 
+	// Writer goroutines using hostsMutex (matching the fix)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
@@ -322,17 +325,22 @@ func TestHostsRace(t *testing.T) {
 				newHosts["A"] = map[string][]string{
 					"*.example.com.": {"1.2.3.4"},
 				}
+				hostsMutex.Lock()
 				hosts = newHosts
+				hostsMutex.Unlock()
 			}
 		}()
 	}
 
+	// Reader goroutines using hostsMutex (matching the fix)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
+				hostsMutex.RLock()
 				localHosts := hosts
+				hostsMutex.RUnlock()
 				for host, values := range localHosts["A"] {
 					_ = host
 					_ = values
@@ -766,24 +774,27 @@ func TestLocalhostAAAA(t *testing.T) {
 }
 
 func TestLocalhostNonAQuery(t *testing.T) {
-	// Non-A/AAAA queries for localhost produce nil RR - this is a bug
+	// Non-A/AAAA queries for localhost now return empty response (fix applied)
+	setDefaults()
+	ups := []string{"1.1.1.1:53"}
+	initEvents(ups)
+	upstreams = ups
+
+	addr, shutdown := startTestServer(t)
+	defer shutdown()
+
 	for _, qtype := range []uint16{dns.TypeMX, dns.TypeTXT, dns.TypeNS, dns.TypeSOA, dns.TypeSRV, dns.TypeCNAME, dns.TypePTR} {
 		t.Run(dns.Type(qtype).String(), func(t *testing.T) {
-			question := dns.Question{Name: "localhost.", Qtype: qtype, Qclass: dns.ClassINET}
-			var rr dns.RR
-			switch question.Qtype {
-			case dns.TypeA:
-				rr, _ = dns.NewRR("localhost. 3600 IN A 127.0.0.1")
-			case dns.TypeAAAA:
-				rr, _ = dns.NewRR("localhost. 3600 IN AAAA ::1")
+			resp, err := sendQuery(addr, "localhost.", qtype)
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
 			}
-			if rr != nil {
-				t.Fatalf("expected nil rr for %s query on localhost", dns.Type(qtype).String())
+			if resp == nil {
+				t.Fatal("expected non-nil response")
 			}
-			// This creates a response with nil RR element - the bug
-			resp := createResponse([]dns.RR{rr})
-			if resp.Answer[0] != nil {
-				t.Fatal("expected nil RR in answer")
+			// Should return empty answer (no nil RR elements)
+			if len(resp.Answer) != 0 {
+				t.Fatalf("expected 0 answers for %s query on localhost, got %d", dns.Type(qtype).String(), len(resp.Answer))
 			}
 		})
 	}
@@ -951,17 +962,7 @@ func TestShuffleCopyPreservesOriginal(t *testing.T) {
 // ===== File permissions tests =====
 
 func TestFilePermissions(t *testing.T) {
-	const perm1 = 06644
-	const perm2 = 06444
-
-	if perm1&02000 != 0 {
-		t.Log("BUG: permission 06644 has setgid bit set, should be 0644")
-	}
-	if perm2&02000 != 0 {
-		t.Log("BUG: permission 06444 has setgid bit set, should be 0444")
-	}
-
-	// Verify correct permissions
+	// Verify correct permissions don't have setgid bit
 	if 0644&02000 != 0 {
 		t.Fatal("0644 should not have setgid bit")
 	}
@@ -1284,19 +1285,19 @@ func TestE2EConcurrentEventsAndStats(t *testing.T) {
 		}()
 	}
 
-	// Simulate stats reader goroutine (uses loggerMutex like main.go)
+	// Simulate stats reader goroutine (uses eventMutex like fixed main.go)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				loggerMutex.Lock()
+				eventMutex.Lock()
 				for _, u := range ups {
 					_ = events[u]["got"]
 					_ = events[u]["error"]
 					_ = events[u]["trunc"]
 				}
-				loggerMutex.Unlock()
+				eventMutex.Unlock()
 			}
 		}()
 	}
@@ -1585,18 +1586,18 @@ func TestE2EFullSystemStress(t *testing.T) {
 		}()
 	}
 
-	// Stats reads (using loggerMutex like main.go does)
+	// Stats reads (using eventMutex like fixed main.go)
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				loggerMutex.Lock()
+				eventMutex.Lock()
 				for _, u := range ups {
 					_ = events[u]["got"]
 					_ = events[u]["error"]
 				}
-				loggerMutex.Unlock()
+				eventMutex.Unlock()
 			}
 		}()
 	}

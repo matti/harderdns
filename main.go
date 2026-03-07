@@ -48,9 +48,8 @@ func resolve(upstream string, question dns.Question, recursionDesired bool, curr
 var eventMutex sync.Mutex
 
 func event(upstream string, name string) {
-	defer eventMutex.Unlock()
-
 	eventMutex.Lock()
+	defer eventMutex.Unlock()
 	events[upstream][name] = events[upstream][name] + 1
 }
 
@@ -217,9 +216,13 @@ func reloadHosts(hostsPath string) {
 	if b, err := ioutil.ReadFile(hostsPath); err != nil {
 		log.Fatalln("failed to read", hostsPath, err)
 	} else {
-		if err := json.Unmarshal(b, &hosts); err != nil {
+		var newHosts map[string]map[string][]string
+		if err := json.Unmarshal(b, &newHosts); err != nil {
 			log.Fatalln("failed to parse", hostsPath, err)
 		}
+		hostsMutex.Lock()
+		hosts = newHosts
+		hostsMutex.Unlock()
 	}
 }
 
@@ -251,21 +254,25 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 	switch question.Name {
 	case "localhost.":
 		logger(id, "LOCAL", question)
-		var rr dns.RR
 		switch question.Qtype {
 		case dns.TypeA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN A %s\n", question.Name, 3600, "127.0.0.1"))
+			final = createResponse([]dns.RR{rr})
 		case dns.TypeAAAA:
-			rr, _ = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			rr, _ := dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s\n", question.Name, 3600, "::1"))
+			final = createResponse([]dns.RR{rr})
+		default:
+			final = createResponse(nil)
 		}
-
-		final = createResponse([]dns.RR{rr})
 	}
 
 	if final == nil {
 		switch question.Qtype {
 		case dns.TypeA, dns.TypeAAAA:
-			for host, values := range hosts[dns.Type(question.Qtype).String()] {
+			hostsMutex.RLock()
+			localHosts := hosts[dns.Type(question.Qtype).String()]
+			hostsMutex.RUnlock()
+			for host, values := range localHosts {
 				if wildcard.Match(host, question.Name) {
 					logger(id, "HOSTS", question)
 					var rrs []dns.RR
@@ -313,6 +320,7 @@ func handleDnsRequest(w dns.ResponseWriter, request *dns.Msg) {
 }
 
 var hosts = make(map[string]map[string][]string)
+var hostsMutex sync.RWMutex
 
 var upstreams []string
 var dialTimeout time.Duration
@@ -338,7 +346,8 @@ func main() {
 		name := os.Args[2]
 		for {
 			const timeout = 100 * time.Millisecond
-			ctx, _ := context.WithTimeout(context.TODO(), timeout)
+			ctx, cancel := context.WithTimeout(context.TODO(), timeout)
+			defer cancel()
 
 			var r net.Resolver
 			startedAt := time.Now()
@@ -408,7 +417,7 @@ func main() {
 		var currentResolvConf string
 		if devMode {
 			currentResolvConf = "/tmp/resolv.conf"
-			err := ioutil.WriteFile(currentResolvConf, []byte("# before harderdns\nnameserver 138.197.68.199\n"), 06644)
+			err := ioutil.WriteFile(currentResolvConf, []byte("# before harderdns\nnameserver 138.197.68.199\n"), 0644)
 			if err != nil {
 				log.Fatalln("failed to write ", currentResolvConf, "err", err)
 			}
@@ -436,7 +445,7 @@ func main() {
 			resolvUpstreams = append(resolvUpstreams, resolvUpstream+":53")
 		}
 
-		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 06444)
+		err = ioutil.WriteFile(currentResolvConf, []byte("# managed by harderdns\nnameserver 127.0.0.1\n"), 0444)
 		if err != nil {
 			log.Fatalln("failed to write " + currentResolvConf)
 		}
@@ -451,14 +460,14 @@ func main() {
 			return
 		}
 		for {
-			loggerMutex.Lock()
+			eventMutex.Lock()
 			for _, upstream := range upstreams {
 				log.Println("upstream", upstream, "got", events[upstream]["got"], "error", events[upstream]["error"], "trunc", events[upstream]["trunc"])
 			}
 			for _, resolvUpstream := range resolvUpstreams {
 				log.Println("upstream", resolvUpstream, "got", events[resolvUpstream]["got"], "error", events[resolvUpstream]["error"], "trunc", events[resolvUpstream]["trunc"])
 			}
-			loggerMutex.Unlock()
+			eventMutex.Unlock()
 			time.Sleep(statsDelay)
 		}
 	}()
