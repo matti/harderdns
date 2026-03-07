@@ -48,9 +48,8 @@ func resolve(upstream string, question dns.Question, recursionDesired bool, curr
 var eventMutex sync.Mutex
 
 func event(upstream string, name string) {
-	defer eventMutex.Unlock()
-
 	eventMutex.Lock()
+	defer eventMutex.Unlock()
 	events[upstream][name] = events[upstream][name] + 1
 }
 
